@@ -1,0 +1,472 @@
+---
+export const prerender = false;
+import SiteLayout from "@/layouts/SiteLayout.astro";
+import AdminMediaManager from "@/components/AdminMediaManager";
+import AdminRefundManager from "@/components/AdminRefundManager";
+import AdminWalkInBooking from "@/components/AdminWalkInBooking";
+import AdminSlotGrid from "@/components/AdminSlotGrid";
+import AdminPaymentGatewaySettings from "@/components/AdminPaymentGatewaySettings";
+import { createRequestSupabase, isAdminRole } from "@/lib/server/supabase";
+import { formatRupees } from "@/lib/site";
+
+const sections: Record<string, { title: string; table: string; columns: string; order: string }> = {
+  services: { title: "Services", table: "services", columns: "name,duration_minutes,price_paise,is_active,is_featured,sort_order", order: "sort_order" },
+  categories: { title: "Categories", table: "service_categories", columns: "name,is_active,sort_order", order: "sort_order" },
+  "add-ons": { title: "Add-ons", table: "service_addons", columns: "name,service_id,price_paise,extra_duration_minutes,is_active", order: "sort_order" },
+  chambers: { title: "Treatment chambers", table: "treatment_chambers", columns: "name,chamber_type,capacity,is_active,sort_order", order: "sort_order" },
+  media: { title: "Service media", table: "service_media", columns: "service_id,media_type,storage_path,alt_text,is_active,sort_order", order: "sort_order" },
+  availability: { title: "Availability", table: "availability_rules", columns: "weekday,opens_at,closes_at,slot_interval_minutes,capacity,is_closed,service_id", order: "weekday" },
+  bookings: { title: "Bookings", table: "bookings", columns: "reference,customer_name_snapshot,customer_phone_snapshot,service_name_snapshot,starts_at,chamber_id,booking_channel,payment_status,total_paise,status", order: "starts_at" },
+  customers: { title: "Customers", table: "profiles", columns: "full_name,phone,created_at", order: "created_at" },
+  offers: { title: "Offers", table: "coupons", columns: "code,description,discount_type,discount_value,minimum_spend_paise,is_active,ends_at", order: "ends_at" },
+  payments: { title: "Payments", table: "payments", columns: "provider_order_id,provider_payment_id,amount_paise,currency,status,verified_at,created_at", order: "created_at" },
+  refunds: { title: "Refunds", table: "refunds", columns: "provider_refund_id,amount_paise,reason,status,completed_at,created_at", order: "created_at" },
+  notifications: { title: "Notifications", table: "notifications", columns: "channel,event_type,status,provider_message_id,attempt_count,last_error,sent_at,created_at", order: "created_at" },
+  reports: { title: "Reports", table: "bookings", columns: "reference,service_name_snapshot,starts_at,status,payment_status,total_paise", order: "starts_at" },
+  settings: { title: "Business settings", table: "business_settings", columns: "key,value,is_public,updated_at", order: "key" },
+  "audit-logs": { title: "Audit logs", table: "audit_logs", columns: "actor_user_id,action,entity_type,entity_id,created_at", order: "created_at" },
+};
+const section = Astro.params.section ?? "";
+const config = sections[section];
+if (!config) return Astro.redirect("/admin");
+const client = createRequestSupabase(Astro.cookies, Astro.request);
+if (!client) return Astro.redirect("/admin/login");
+const { data: { user } } = await client.auth.getUser();
+if (!user || !isAdminRole(user.app_metadata)) return Astro.redirect("/admin/login");
+let records: Record<string, unknown>[] = [];
+let loadError = false;
+let exceptions: { id: string; starts_at: string; ends_at: string; exception_type: string; capacity_override: number | null; reason: string | null }[] = [];
+let walkInCustomers: { id: string; name: string; phone: string }[] = [];
+let walkInServices: { id: string; name: string; duration: number; pricePaise: number; taxRateBasisPoints: number; advanceType: "fixed" | "percentage"; advanceValue: number }[] = [];
+let walkInChambers: { id: string; name: string; chamberType: string; capacity: number }[] = [];
+const identityColumn = section === "settings" ? "key" : "id";
+const selectColumns = section === "settings" ? config.columns : `${config.columns},${identityColumn}`;
+const bookingStatuses = ["pending_payment", "confirmed", "cancelled", "completed", "no_show", "payment_failed", "expired"] as const;
+const requestedDay = section === "bookings" ? Astro.url.searchParams.get("day") : null;
+const parsedRequestedDay = requestedDay && /^\d{4}-\d{2}-\d{2}$/.test(requestedDay)
+  ? new Date(`${requestedDay}T00:00:00Z`)
+  : null;
+const selectedDay = requestedDay && parsedRequestedDay && !Number.isNaN(parsedRequestedDay.getTime())
+  && parsedRequestedDay.toISOString().slice(0, 10) === requestedDay
+  ? requestedDay
+  : "";
+const requestedStatus = section === "bookings" ? Astro.url.searchParams.get("status") : null;
+const selectedStatus = bookingStatuses.find((status) => status === requestedStatus) ?? "";
+let listing = client.from(config.table).select(selectColumns).order(config.order, { ascending: false }).limit(100);
+if (section === "bookings" && selectedDay) {
+  const start = new Date(`${selectedDay}T00:00:00+05:30`);
+  listing = listing.gte("starts_at", start.toISOString()).lt("starts_at", new Date(start.getTime() + 24 * 60 * 60 * 1000).toISOString());
+}
+if (section === "bookings" && selectedStatus) listing = listing.eq("status", selectedStatus);
+const { data, error } = await listing;
+if (error) loadError = true;
+else records = (data ?? []).map((record) => Object.fromEntries(Object.entries(record)));
+if (section === "bookings" && records.length) {
+  const bookingIds = records.map((record) => String(record.id));
+  const { data: paymentRows, error: paymentsError } = await client.from("payments")
+    .select("booking_id,provider,provider_order_id,provider_payment_id,amount_paise,status,payment_method,created_at")
+    .in("booking_id", bookingIds).order("created_at", { ascending: false });
+  if (paymentsError) loadError = true;
+  const latestPaymentByBooking = new Map<string, Record<string, unknown>>();
+  for (const payment of paymentRows ?? []) {
+    if (!latestPaymentByBooking.has(payment.booking_id)) latestPaymentByBooking.set(payment.booking_id, payment);
+  }
+  records = records.map((record) => {
+    const payment = latestPaymentByBooking.get(String(record.id));
+    return {
+      ...record,
+      gateway_provider: payment?.provider ?? "—",
+      payment_method: payment?.payment_method ?? (payment?.provider === "razorpay" ? "razorpay" : "—"),
+      provider_payment_id: payment?.provider_payment_id ?? payment?.provider_order_id ?? "—",
+      payment_amount_paise: payment?.amount_paise ?? null,
+    };
+  });
+}
+if (section === "availability") {
+  const result = await client.from("availability_exceptions").select("id,starts_at,ends_at,exception_type,capacity_override,reason").order("starts_at", { ascending: false }).limit(100);
+  if (result.error) loadError = true;
+  else exceptions = result.data ?? [];
+}
+if (section === "bookings") {
+  const [{ data: customerData }, { data: serviceData }, { data: chamberData }] = await Promise.all([
+    client.from("profiles").select("id,full_name,phone").not("phone", "is", null).order("full_name").limit(500),
+    client.from("services").select("id,name,duration_minutes,price_paise,tax_rate_basis_points,advance_type,advance_value").eq("is_active", true).order("name"),
+    client.from("treatment_chambers").select("id,name,chamber_type,capacity").eq("is_active", true).order("sort_order").order("name"),
+  ]);
+  walkInCustomers = (customerData ?? []).map((customer) => ({
+    id: customer.id,
+    name: customer.full_name?.trim() || "Customer",
+    phone: customer.phone ?? "",
+  })).filter((customer) => customer.phone.trim());
+  walkInServices = (serviceData ?? []).map((service) => ({
+    id: service.id, name: service.name, duration: service.duration_minutes, pricePaise: service.price_paise,
+    taxRateBasisPoints: service.tax_rate_basis_points, advanceType: service.advance_type, advanceValue: service.advance_value,
+  }));
+  walkInChambers = (chamberData ?? []).map((chamber) => ({
+    id: chamber.id, name: chamber.name, chamberType: chamber.chamber_type, capacity: chamber.capacity,
+  }));
+}
+const keys = section === "bookings"
+  ? [...config.columns.split(","), "gateway_provider", "payment_method", "provider_payment_id", "payment_amount_paise"]
+  : config.columns.split(",");
+function currentSettingValue(key: string): number {
+  const setting = records.find((record) => record.key === key)?.value;
+  if (!setting || typeof setting !== "object") return key === "booking_hold_minutes" ? 15 : 0;
+  const property = key === "booking_horizon_days" ? "days" : "minutes";
+  return Number((setting as Record<string, unknown>)[property] ?? 0);
+}
+const editableSections = ["services", "categories", "add-ons", "chambers", "availability", "offers"];
+type EditField = { name: string; label: string; type: "text" | "number" | "time" | "datetime-local" | "checkbox" | "advance" | "discount"; value: string; options?: { value: string; label: string }[] };
+function getEditFields(record: Record<string, unknown>): EditField[] {
+  const fields: Record<string, { name: string; label: string; type: EditField["type"] }[]> = {
+    services: [
+      { name: "name", label: "Name", type: "text" },
+      { name: "short_description", label: "Short description", type: "text" }, { name: "description", label: "Description", type: "text" },
+      { name: "duration_minutes", label: "Duration (minutes)", type: "number" }, { name: "buffer_minutes", label: "Buffer (minutes)", type: "number" },
+      { name: "price_paise", label: "Price (₹)", type: "number" }, { name: "advance_type", label: "Advance type", type: "advance" },
+      { name: "advance_value", label: "Advance amount (₹) / percentage", type: "number" }, { name: "tax_rate_basis_points", label: "Tax (basis points)", type: "number" },
+    ],
+    categories: [
+      { name: "name", label: "Name", type: "text" },
+      { name: "description", label: "Description", type: "text" },
+    ],
+    "add-ons": [
+      { name: "name", label: "Name", type: "text" }, { name: "description", label: "Description", type: "text" },
+      { name: "price_paise", label: "Price (₹)", type: "number" }, { name: "extra_duration_minutes", label: "Extra duration (minutes)", type: "number" },
+    ],
+    chambers: [
+      { name: "name", label: "Chamber name", type: "text" }, { name: "chamber_type", label: "Room type", type: "text" },
+      { name: "capacity", label: "Concurrent capacity", type: "number" }, { name: "sort_order", label: "Display order", type: "number" },
+    ],
+    availability: [
+      { name: "weekday", label: "Weekday (0=Sun)", type: "number" }, { name: "opens_at", label: "Opens", type: "time" },
+      { name: "closes_at", label: "Closes", type: "time" }, { name: "slot_interval_minutes", label: "Slot interval (minutes)", type: "number" },
+      { name: "capacity", label: "Capacity", type: "number" }, { name: "is_closed", label: "Closed all day", type: "checkbox" },
+    ],
+    offers: [
+      { name: "code", label: "Offer code", type: "text" }, { name: "description", label: "Description", type: "text" },
+      { name: "discount_type", label: "Discount type", type: "discount" }, { name: "discount_value", label: "Discount value", type: "number" },
+      { name: "max_discount_paise", label: "Maximum discount (₹)", type: "number" },
+      { name: "minimum_spend_paise", label: "Minimum spend (₹)", type: "number" },
+      { name: "max_redemptions", label: "Total redemption limit", type: "number" },
+      { name: "max_per_customer", label: "Limit per customer", type: "number" },
+      { name: "starts_at", label: "Starts", type: "datetime-local" }, { name: "ends_at", label: "Ends", type: "datetime-local" },
+      { name: "first_booking_only", label: "First booking only", type: "checkbox" },
+    ],
+    settings: [
+      { name: "key", label: "Setting key", type: "text" }, { name: "value", label: "Value", type: "number" },
+    ],
+  };
+  return (fields[section] ?? []).map((field) => ({
+    ...field,
+    value: field.type === "checkbox"
+      ? String(Boolean(record[field.name]))
+      : field.type === "datetime-local" && record[field.name]
+        ? new Date(new Date(String(record[field.name])).getTime() + 330 * 60_000).toISOString().slice(0, 16)
+        : ["price_paise", "max_discount_paise", "minimum_spend_paise"].includes(field.name)
+          ? record[field.name] === null || record[field.name] === undefined ? "" : (Number(record[field.name]) / 100).toFixed(2)
+        : field.name === "advance_value" && record.advance_type !== "percentage"
+          ? (Number(record[field.name] ?? 0) / 100).toFixed(2)
+        : field.name === "advance_value" && record.advance_type === "percentage"
+          ? (Number(record[field.name] ?? 0) / 100).toFixed(2)
+        : field.name === "discount_value" && record.discount_type === "fixed"
+          ? (Number(record[field.name] ?? 0) / 100).toFixed(2)
+        : field.name === "discount_value" && record.discount_type === "percentage"
+          ? (Number(record[field.name] ?? 0) / 100).toFixed(2)
+        : field.name === "value" && record.value && typeof record.value === "object"
+      ? String((record.value as Record<string, unknown>).days ?? (record.value as Record<string, unknown>).minutes ?? "")
+      : field.name === "opens_at" || field.name === "closes_at"
+        ? String(record[field.name] ?? "").slice(0, 5)
+        : record[field.name] === null || record[field.name] === undefined ? "" : String(record[field.name]),
+  }));
+}
+let serviceChoices: { id: string; name: string }[] = [];
+if (["add-ons", "availability"].includes(section)) {
+  const { data: serviceData } = await client.from("services").select("id,name").order("name");
+  serviceChoices = serviceData ?? [];
+}
+function formatValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value).replaceAll("_", " ");
+}
+function formatAdminValue(key: string, value: unknown, record: Record<string, unknown>): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (key === "chamber_id" && typeof value === "string") {
+    return walkInChambers.find((chamber) => chamber.id === value)?.name ?? "Unassigned";
+  }
+  if (["price_paise", "total_paise", "advance_due_paise", "balance_due_paise", "amount_paise", "payment_amount_paise", "max_discount_paise", "minimum_spend_paise"].includes(key)) {
+    return formatRupees(Number(value));
+  }
+  if (key === "discount_value" && record.discount_type === "fixed") return formatRupees(Number(value));
+  if (key === "advance_value" && record.advance_type !== "percentage") return formatRupees(Number(value));
+  return formatValue(value);
+}
+function adminColumnLabel(key: string): string {
+  const labels: Record<string, string> = {
+    price_paise: "Price (₹)",
+    total_paise: "Total (₹)",
+    advance_due_paise: "Advance due (₹)",
+    balance_due_paise: "Balance due (₹)",
+    amount_paise: "Amount (₹)",
+    payment_amount_paise: "Paid / collected (₹)",
+    customer_name_snapshot: "Guest",
+    customer_phone_snapshot: "Guest phone",
+    chamber_id: "Treatment chamber",
+    booking_channel: "Channel",
+    gateway_provider: "Gateway",
+    payment_method: "Payment method",
+    provider_payment_id: "Gateway / payment ID",
+    max_discount_paise: "Maximum discount (₹)",
+    minimum_spend_paise: "Minimum spend (₹)",
+    advance_value: "Advance (₹ / %)",
+    discount_value: "Discount (₹ / %)",
+  };
+  return labels[key] ?? key.replaceAll("_", " ");
+}
+function bookingTransitions(status: string): { value: string; label: string }[] {
+  if (status === "pending_payment" || status === "payment_failed") return [{ value: "cancelled", label: "Reject / cancel booking" }];
+  if (status === "confirmed") return [
+    { value: "cancelled", label: "Reject / cancel booking" },
+    { value: "completed", label: "Mark completed" },
+    { value: "no_show", label: "Mark no-show" },
+  ];
+  return [];
+}
+---
+<SiteLayout title={config.title} noindex={true}>
+  <section class="admin-shell">
+    <header class="admin-topbar">
+      <a class="admin-brand" href="/admin" aria-label="Ocean Valley administration home"><span class="admin-brand-mark">OV</span><span><strong>Ocean Valley</strong><small>EXECUTIVE ADMINISTRATION SUITE<br />Reception &amp; Slot Management</small></span></a>
+      <nav class="admin-topnav" aria-label="Administration sections">{[["bookings", "Appointments"], ["services", "Treatment menu"], ["chambers", "Treatment chambers"], ["media", "Media"], ["offers", "Coupons"], ["payments", "Payments"], ["settings", "Settings"]].map(([slug, label]) => <a href={`/admin/${slug}`} aria-current={slug === section ? "page" : undefined}>{label}</a>)}</nav>
+      <div class="admin-toolbar"><span class="admin-status-pill is-connected"><i></i> Supabase: Connected</span><a class="admin-toolbar-link" href="/">← Return to sanctuary</a><a class="admin-toolbar-link is-signout" href="/api/auth/signout">Sign out</a></div>
+    </header>
+    <div class="admin-content"><span class="eyebrow">ADMIN / {config.title.toUpperCase()}</span><h1>{config.title}</h1><p>Records are read through the protected admin session. Catalogue, availability and offer changes are validated server-side and recorded in the audit log.</p>
+      {section === "services" && <form class="admin-editor" data-admin-form data-entity="services"><h2>Add a treatment</h2><div class="admin-editor-grid"><label>Name<input name="name" required maxlength="120" /></label><label>Duration (minutes)<input name="duration_minutes" type="number" min="1" max="1440" required /></label><label>Price (₹)<input name="price_paise" data-paise-input type="number" min="0" step=".01" placeholder="0.00" required /></label><label>Advance type<select name="advance_type"><option value="fixed">Fixed amount</option><option value="percentage">Percentage</option></select></label><label>Advance amount (₹) / percentage<input name="advance_value" data-paise-if-fixed data-percent-bps type="number" min="0" step=".01" value="0" /></label><label>Tax (basis points)<input name="tax_rate_basis_points" type="number" min="0" max="10000" value="0" /></label><label>Short description<input name="short_description" maxlength="500" /></label></div><button class="button" type="submit">Add inactive service</button><p class="admin-form-message" role="status"></p><p class="setup-hint">The URL is generated from the treatment name. New services stay inactive until explicitly activated.</p></form>}
+      {section === "chambers" && <form class="admin-editor" data-admin-form data-entity="chambers"><h2>Add a treatment chamber</h2><div class="admin-editor-grid"><label>Chamber name<input name="name" required maxlength="120" placeholder="e.g. Pacific Serenity" /></label><label>Room type<input name="chamber_type" required maxlength="80" placeholder="Standard, VIP suite…" value="Standard chamber" /></label><label>Concurrent capacity<input name="capacity" type="number" min="1" max="100" value="1" required /></label><label>Display order<input name="sort_order" type="number" min="0" value="0" /></label></div><button class="button" type="submit">Add treatment chamber</button><p class="admin-form-message" role="status"></p><p class="setup-hint">Active chambers are allocated to online bookings and available for reception walk-ins. Deactivate rooms during renovations rather than deleting booking history.</p></form>}
+      {section === "categories" && <form class="admin-editor" data-admin-form data-entity="categories"><h2>Add a category</h2><div class="admin-editor-grid"><label>Name<input name="name" required maxlength="120" /></label><label>Description<input name="description" maxlength="5000" /></label><label>Sort order<input name="sort_order" type="number" min="0" value="0" /></label></div><button class="button" type="submit">Add inactive category</button><p class="setup-hint">The URL is generated from the category name.</p><p class="admin-form-message" role="status"></p></form>}
+      {section === "add-ons" && <form class="admin-editor" data-admin-form data-entity="add-ons"><h2>Add an appointment extra</h2><div class="admin-editor-grid"><label>Service<select name="service_id" required><option value="">Choose a service</option>{serviceChoices.map((service) => <option value={service.id}>{service.name}</option>)}</select></label><label>Name<input name="name" required maxlength="120" /></label><label>Description<input name="description" maxlength="5000" /></label><label>Price (₹)<input name="price_paise" data-paise-input type="number" min="0" step=".01" placeholder="0.00" required /></label><label>Extra duration (minutes)<input name="extra_duration_minutes" type="number" min="0" value="0" /></label><label>Sort order<input name="sort_order" type="number" min="0" value="0" /></label></div><button class="button" type="submit">Add appointment extra</button><p class="admin-form-message" role="status"></p></form>}
+      {section === "availability" && <><form class="admin-editor" data-admin-form data-entity="availability"><h2>Add weekly hours</h2><div class="admin-editor-grid"><label>Weekday<select name="weekday" required><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select></label><label>Service (optional)<select name="service_id"><option value="">Default for all services</option>{serviceChoices.map((service) => <option value={service.id}>{service.name}</option>)}</select></label><label>Opens<input name="opens_at" type="time" required /></label><label>Closes<input name="closes_at" type="time" required /></label><label>Slot interval (minutes)<input name="slot_interval_minutes" type="number" min="1" value="30" required /></label><label>Capacity<input name="capacity" type="number" min="1" value="1" required /></label><label class="admin-checkbox-field"><input name="is_closed" type="checkbox" /> Closed all day</label></div><button class="button" type="submit">Add availability rule</button><p class="admin-form-message" role="status"></p><p class="setup-hint">Times use the booking timezone, Asia/Kolkata. The same weekday rule applies every week. Mark the rule closed to block bookings for the selected weekday.</p></form><form class="admin-editor" data-admin-form data-entity="exceptions"><h2>Add a date-specific exception</h2><div class="admin-editor-grid"><label>Type<select name="exception_type"><option value="closed">Closed period</option><option value="capacity_override">Capacity override</option></select></label><label>Starts (India time)<input name="starts_at" type="datetime-local" required /></label><label>Ends (India time)<input name="ends_at" type="datetime-local" required /></label><label>Capacity (for override)<input name="capacity_override" type="number" min="0" /></label><label>Reason<input name="reason" maxlength="500" /></label></div><button class="button" type="submit">Add date exception</button><p class="admin-form-message" role="status"></p><p class="setup-hint">A closed period blocks appointments; capacity overrides replace configured capacity during the selected period.</p></form><h2>Upcoming and recent exceptions</h2>{exceptions.length ? <div class="admin-exceptions">{exceptions.map((exception) => <article><div><strong>{exception.exception_type.replaceAll("_", " ")}</strong><span>{new Date(exception.starts_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} – {new Date(exception.ends_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</span><small>{exception.reason || (exception.capacity_override !== null ? `Capacity: ${exception.capacity_override}` : "No reason provided")}</small></div><button type="button" class="admin-toggle" data-admin-delete data-record-id={exception.id}>Remove</button></article>)}</div> : <p class="setup-hint">No date-specific exceptions are configured.</p>}</>}
+      {section === "offers" && <form class="admin-editor" data-admin-form data-entity="offers">
+        <h2>Add an offer</h2>
+        <div class="admin-editor-grid">
+          <label>Offer code<input name="code" required maxlength="60" pattern="[A-Za-z0-9_-]+" /></label>
+          <label>Description<input name="description" maxlength="5000" /></label>
+          <label>Discount type<select name="discount_type"><option value="fixed">Fixed amount (₹)</option><option value="percentage">Percentage</option></select></label>
+          <label>Discount value (₹ or percentage)<input name="discount_value" data-paise-if-fixed data-percent-bps type="number" min="0" step=".01" required /></label>
+          <label>Maximum discount (₹)<input name="max_discount_paise" data-paise-input type="number" min="0" step=".01" /></label>
+          <label>Minimum spend (₹)<input name="minimum_spend_paise" data-paise-input type="number" min="0" step=".01" value="0" /></label>
+          <label>Total redemption limit<input name="max_redemptions" type="number" min="1" /></label>
+          <label>Limit per customer<input name="max_per_customer" type="number" min="1" /></label>
+          <label>Starts<input name="starts_at" type="datetime-local" /></label>
+          <label>Ends<input name="ends_at" type="datetime-local" /></label>
+          <label class="admin-checkbox-field"><input name="first_booking_only" type="checkbox" /> First booking only</label>
+        </div>
+        <button class="button" type="submit">Add inactive offer</button>
+        <p class="admin-form-message" role="status"></p>
+        <p class="setup-hint">New offers remain inactive until explicitly activated below. Percentage values use 100 = 1%.</p>
+      </form>}
+      {section === "settings" && <><form class="admin-editor" data-admin-form data-entity="settings"><h2>Configure booking rules</h2><div class="admin-editor-grid"><label>Setting<select name="key" data-setting-selector><option value="booking_horizon_days" data-current-value={currentSettingValue("booking_horizon_days")}>Booking horizon (days, 1–365)</option><option value="minimum_lead_time_minutes" data-current-value={currentSettingValue("minimum_lead_time_minutes")}>Minimum lead time (minutes, 0–10080)</option><option value="booking_hold_minutes" data-current-value={currentSettingValue("booking_hold_minutes")}>Unpaid hold duration (minutes, 5–60)</option></select></label><label>Value<input name="value" data-setting-value type="number" min="1" max="365" step="1" value={currentSettingValue("booking_horizon_days")} required /></label></div><button class="button" type="submit">Save booking rule</button><p class="admin-form-message" role="status"></p><p class="setup-hint">Saving updates the same booking settings used by the public availability and reservation checks. Set a booking horizon before customers can reserve.</p></form><AdminPaymentGatewaySettings client:load /></>}
+      {section === "bookings" && <><div class="admin-booking-toolbar"><div role="tablist" aria-label="Appointment views"><button type="button" class="is-selected" data-booking-view="table">☷ Master booking table ({records.length})</button><button type="button" data-booking-view="grid">◷ Interactive grid &amp; slot locking</button></div><div><a class="admin-secondary-button" href="/api/admin/reports.csv">↓ Export CSV</a><AdminWalkInBooking client:load customers={walkInCustomers} services={walkInServices} chambers={walkInChambers} /></div></div><div data-booking-grid-view hidden><AdminSlotGrid client:load services={walkInServices.map((service) => ({ id: service.id, name: service.name, duration: service.duration }))} chambers={walkInChambers.map((chamber) => ({ id: chamber.id, name: chamber.name, type: chamber.chamberType, capacity: chamber.capacity }))} /></div><div class="admin-booking-filters"><label class="admin-booking-search"><span class="sr-only">Search appointments</span><input type="search" placeholder="Search guest name, phone, reference, payment ID…" data-booking-search-input /></label><label><span class="sr-only">Filter by status</span><select data-booking-status-filter><option value="">All statuses</option>{bookingStatuses.map((status) => <option value={status}>{status.replaceAll("_", " ")}</option>)}</select></label><label><span class="sr-only">Filter by appointment date</span><input type="date" value={selectedDay} data-booking-date-filter /></label></div></>}
+      {section === "reports" && <form class="report-filters" method="get" action="/api/admin/reports.csv"><label>From<input type="date" name="from" /></label><label>To<input type="date" name="to" /></label><label>Status<select name="status"><option value="">All statuses</option><option value="pending_payment">Pending payment</option><option value="confirmed">Confirmed</option><option value="cancelled">Cancelled</option><option value="completed">Completed</option><option value="no_show">No-show</option><option value="payment_failed">Payment failed</option><option value="expired">Expired</option></select></label><button class="button" type="submit">Download bookings CSV <span aria-hidden="true">↓</span></button></form>}
+      {section === "media" && <AdminMediaManager client:load />}
+      {section === "refunds" && <AdminRefundManager client:load />}
+      {section !== "media" && section !== "refunds" && (loadError ? <div class="empty-panel" role="status"><h2>Records could not be loaded.</h2><p>Check database access and try again later.</p></div> : records.length ? <div class="admin-table-wrap" data-booking-table-view><table class="admin-table"><thead><tr>{keys.map((key) => <th scope="col">{adminColumnLabel(key)}</th>)}{(editableSections.includes(section) || section === "bookings" || section === "notifications") && <th scope="col">Admin action</th>}</tr></thead><tbody>{records.map((record) => <tr data-booking-row={section === "bookings" ? Object.values(record).map(String).join(" ").toLowerCase() : undefined} data-row-status={section === "bookings" ? String(record.status) : undefined} data-row-date={section === "bookings" ? new Date(String(record.starts_at)).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) : undefined}>{keys.map((key) => <td>{formatAdminValue(key, record[key], record)}</td>)}{editableSections.includes(section) && <td class="admin-action-cell"><details class="admin-edit-details"><summary>Edit fields</summary><form class="admin-inline-editor" data-admin-form data-entity={section} data-record-id={String(record.id)}><div class="admin-editor-grid">{getEditFields(record).map((field) => <label>{field.label}{field.type === "advance" ? <select name={field.name} value={field.value}><option value="fixed">Fixed amount (₹)</option><option value="percentage">Percentage</option></select> : field.type === "discount" ? <select name={field.name} value={field.value}><option value="fixed">Fixed amount (₹)</option><option value="percentage">Percentage</option></select> : <input name={field.name} type={field.type} value={field.value} data-paise-input={["price_paise", "max_discount_paise", "minimum_spend_paise"].includes(field.name) ? "" : undefined} data-paise-if-fixed={["advance_value", "discount_value"].includes(field.name) ? "" : undefined} data-percent-bps={["advance_value", "discount_value"].includes(field.name) ? "" : undefined} />}</label>)}</div><button class="admin-toggle" type="submit">Save changes</button><p class="admin-form-message" role="status"></p></form></details>{["services", "categories", "add-ons", "offers", "chambers"].includes(section) && <button class="admin-toggle" type="button" data-admin-toggle data-entity={section} data-record-id={String(record.id)} data-field="is_active" data-value={String(!record.is_active)}>{record.is_active ? "Archive" : "Restore"}</button>}</td>}{section === "bookings" && <td class="admin-action-cell">{bookingTransitions(String(record.status)).length ? <div class="admin-booking-action"><label><span class="sr-only">Update status for {String(record.reference)}</span><select data-booking-status aria-label={`Update status for ${String(record.reference)}`}><option value="">Choose action</option>{bookingTransitions(String(record.status)).map((transition) => <option value={transition.value}>{transition.label}</option>)}</select></label><label><span class="sr-only">Cancellation reason (required when cancelling)</span><input data-booking-reason maxlength="500" placeholder="Reason (required to cancel)" /></label><button class="admin-toggle" type="button" data-booking-update data-booking-id={String(record.id)}>Update</button><p class="admin-form-message" role="status"></p></div> : <span>—</span>}</td>}{section === "notifications" && <td class="admin-action-cell">{record.status === "failed" ? <><button class="admin-toggle" type="button" data-notification-retry data-notification-id={String(record.id)}>Queue retry</button><p class="admin-form-message" role="status"></p></> : <span>—</span>}</td>}</tr>)}</tbody></table></div> : <div class="empty-panel"><h2>No {config.title.toLowerCase()} to show.</h2><p>Records will appear when the Ocean Valley team adds them.</p></div>)}
+      {section === "bookings" && <p class="setup-hint">A reason is required to cancel an appointment. Cancellation does not automatically issue a refund; review captured payments in Refunds and apply owner-approved policy.</p>}
+      {!editableSections.includes(section) && section !== "bookings" && section !== "notifications" && <p class="setup-hint">This section is a protected data listing. Mutations for customer, payment and refund records remain disabled until their provider and policy workflows are implemented.</p>}
+      {section === "notifications" && <p class="setup-hint">Failed messages can be manually queued for another attempt. Confirm provider configuration and consent before retrying.</p>}
+    </div>
+  </section>
+</SiteLayout>
+{(editableSections.includes(section) || section === "bookings" || section === "notifications" || section === "settings") && <script>
+  const settingSelector = document.querySelector<HTMLSelectElement>("[data-setting-selector]");
+  const settingValue = document.querySelector<HTMLInputElement>("[data-setting-value]");
+  const bookingRows = Array.from(document.querySelectorAll<HTMLTableRowElement>("[data-booking-row]"));
+  const bookingSearch = document.querySelector<HTMLInputElement>("[data-booking-search-input]");
+  const bookingStatusFilter = document.querySelector<HTMLSelectElement>("[data-booking-status-filter]");
+  const bookingDateFilter = document.querySelector<HTMLInputElement>("[data-booking-date-filter]");
+  const bookingGridView = document.querySelector<HTMLElement>("[data-booking-grid-view]");
+  const bookingTableView = document.querySelector<HTMLElement>("[data-booking-table-view]");
+  function filterBookings() {
+    const search = bookingSearch?.value.trim().toLowerCase() ?? "";
+    const status = bookingStatusFilter?.value ?? "";
+    const day = bookingDateFilter?.value ?? "";
+    for (const row of bookingRows) {
+      row.hidden = (Boolean(search) && !(row.dataset.bookingRow ?? "").includes(search))
+        || (Boolean(status) && row.dataset.rowStatus !== status)
+        || (Boolean(day) && row.dataset.rowDate !== day);
+    }
+  }
+  bookingSearch?.addEventListener("input", filterBookings);
+  bookingStatusFilter?.addEventListener("change", filterBookings);
+  bookingDateFilter?.addEventListener("change", filterBookings);
+  document.querySelectorAll<HTMLButtonElement>("[data-booking-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const showGrid = button.dataset.bookingView === "grid";
+      if (bookingGridView) bookingGridView.hidden = !showGrid;
+      if (bookingTableView) bookingTableView.hidden = showGrid;
+      document.querySelectorAll<HTMLButtonElement>("[data-booking-view]").forEach((tab) => {
+        tab.classList.toggle("is-selected", tab === button);
+        tab.setAttribute("aria-selected", String(tab === button));
+      });
+    });
+  });
+  function updateSettingBounds() {
+    const option = settingSelector?.selectedOptions[0];
+    if (!settingSelector || !settingValue || !option) return;
+    settingValue.value = option.dataset.currentValue ?? "0";
+    const horizon = settingSelector.value === "booking_horizon_days";
+    const hold = settingSelector.value === "booking_hold_minutes";
+    settingValue.min = horizon ? "1" : hold ? "5" : "0";
+    settingValue.max = horizon ? "365" : hold ? "60" : "10080";
+  }
+  settingSelector?.addEventListener("change", updateSettingBounds);
+  document.querySelectorAll<HTMLInputElement>("[data-admin-form] input[type=checkbox]").forEach((checkbox) => {
+    checkbox.checked = checkbox.value === "true";
+  });
+  document.querySelectorAll<HTMLFormElement>("[data-admin-form]").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const message = form.querySelector<HTMLElement>(".admin-form-message");
+      const submit = form.querySelector<HTMLButtonElement>("button[type=submit]");
+      if (submit) submit.disabled = true;
+      if (message) message.textContent = "Saving…";
+      const values: Record<string, string | number | boolean | null> = {};
+      const nullableFields = new Set(["max_discount_paise", "max_redemptions", "max_per_customer", "starts_at", "ends_at"]);
+      new FormData(form).forEach((raw, name) => {
+        if (typeof raw !== "string") return;
+        if (raw === "") {
+          if (nullableFields.has(name)) values[name] = null;
+          return;
+        }
+        const field = form.elements.namedItem(name);
+        if (field instanceof HTMLInputElement && field.type === "number") values[name] = Number(raw);
+        else if (field instanceof HTMLInputElement && field.type === "datetime-local") values[name] = new Date(`${raw}:00+05:30`).toISOString();
+        else values[name] = raw;
+      });
+      form.querySelectorAll<HTMLInputElement>("input[type=checkbox]").forEach((checkbox) => {
+        values[checkbox.name] = checkbox.checked;
+      });
+      const amountType = form.elements.namedItem("advance_type") as HTMLSelectElement | null;
+      const discountType = form.elements.namedItem("discount_type") as HTMLSelectElement | null;
+      form.querySelectorAll<HTMLInputElement>("[data-paise-input], [data-paise-if-fixed]").forEach((input) => {
+        if (input.value === "") return;
+        const percentage = (input.name === "advance_value" && amountType?.value === "percentage")
+          || (input.name === "discount_value" && discountType?.value === "percentage");
+        if (percentage && input.hasAttribute("data-percent-bps")) values[input.name] = Math.round(Number(input.value) * 100);
+        else if (input.hasAttribute("data-paise-input") || input.hasAttribute("data-paise-if-fixed")) {
+          values[input.name] = Math.round(Number(input.value) * 100);
+        }
+      });
+      try {
+        const response = await fetch("/api/admin/catalog", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entity: form.dataset.entity, recordId: form.dataset.recordId, values }),
+        });
+        const result = await response.json() as { error?: string };
+        if (!response.ok) throw new Error(result.error ?? "The record could not be saved.");
+        window.location.reload();
+      } catch (error) {
+        if (message) message.textContent = error instanceof Error ? error.message : "The record could not be saved.";
+        if (submit) submit.disabled = false;
+      }
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-admin-toggle]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        const response = await fetch("/api/admin/catalog", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            entity: button.dataset.entity,
+            recordId: button.dataset.recordId,
+            values: { [button.dataset.field ?? "is_active"]: button.dataset.value === "true" },
+          }),
+        });
+        const result = await response.json() as { error?: string };
+        if (!response.ok) throw new Error(result.error ?? "The record could not be updated.");
+        window.location.reload();
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = error instanceof Error ? error.message : "Update failed";
+      }
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-admin-delete]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (!window.confirm("Remove this availability exception?")) return;
+      button.disabled = true;
+      try {
+        const response = await fetch("/api/admin/catalog", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entity: "exceptions", operation: "delete", recordId: button.dataset.recordId, values: {} }),
+        });
+        const result = await response.json() as { error?: string };
+        if (!response.ok) throw new Error(result.error ?? "The exception could not be removed.");
+        window.location.reload();
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = error instanceof Error ? error.message : "Removal failed";
+      }
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-booking-update]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const row = button.closest("tr");
+      const status = row?.querySelector<HTMLSelectElement>("[data-booking-status]")?.value;
+      const reasonInput = row?.querySelector<HTMLInputElement>("[data-booking-reason]");
+      const reason = reasonInput?.value.trim() ?? "";
+      const message = row?.querySelector<HTMLElement>(".admin-form-message");
+      if (!status) {
+        if (message) message.textContent = "Choose a booking action first.";
+        return;
+      }
+      if (status === "cancelled" && !reason) {
+        if (message) message.textContent = "A reason is required to cancel an appointment.";
+        reasonInput?.focus();
+        return;
+      }
+      if (status === "cancelled" && !window.confirm("Cancel this appointment? This does not issue a refund.")) return;
+      button.disabled = true;
+      if (message) message.textContent = "Updating…";
+      try {
+        const response = await fetch("/api/admin/bookings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bookingId: button.dataset.bookingId, status, reason }),
+        });
+        const result = await response.json() as { error?: string };
+        if (!response.ok) throw new Error(result.error ?? "The appointment could not be updated.");
+        window.location.reload();
+      } catch (error) {
+        if (message) message.textContent = error instanceof Error ? error.message : "The appointment could not be updated.";
+        button.disabled = false;
+      }
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-notification-retry]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const message = button.parentElement?.querySelector<HTMLElement>(".admin-form-message");
+      button.disabled = true;
+      if (message) message.textContent = "Queueing retry…";
+      try {
+        const response = await fetch("/api/admin/notifications", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ notificationId: button.dataset.notificationId }),
+        });
+        const result = await response.json() as { error?: string };
+        if (!response.ok) throw new Error(result.error ?? "The notification could not be retried.");
+        window.location.reload();
+      } catch (error) {
+        if (message) message.textContent = error instanceof Error ? error.message : "The notification could not be retried.";
+        button.disabled = false;
+      }
+    });
+  });
+</script>}

@@ -1,0 +1,55 @@
+---
+import SiteLayout from "@/layouts/SiteLayout.astro";
+import ServiceCollection from "@/components/ServiceCollection.astro";
+import FeaturedOffers from "@/components/FeaturedOffers.astro";
+---
+<SiteLayout title="A sanctuary for your senses" description="Discover restorative treatments and a slower rhythm at Ocean Valley, a wellness sanctuary.">
+  <div class="sanctuary-home">
+    <section class="sanctuary-hero">
+      <div class="sanctuary-hero-copy">
+        <span class="eyebrow"><span class="eyebrow-dot"></span> OCEAN VALLEY · WELLNESS SANCTUARY</span>
+        <h1>Come back<br />to <em>yourself.</em></h1>
+        <p class="sanctuary-hero-intro">Step away from the noise and into a quieter kind of care. Thoughtful treatments, considered rituals, and room to simply be.</p>
+        <div class="sanctuary-hero-actions"><a class="button" href="/services">Explore the rituals <span aria-hidden="true">↗</span></a><a class="text-link" href="/about">Our sanctuary <span aria-hidden="true">→</span></a></div>
+        <div class="sanctuary-note"><span aria-hidden="true">✳</span><div><strong>A softer pace starts here.</strong><small>Care shaped around how you want to feel.</small></div></div>
+      </div>
+      <div class="sanctuary-hero-scene" role="img" aria-label="A tranquil, sculptural ocean horizon at sunset">
+        <div class="sanctuary-scene-glow"></div><div class="sanctuary-sun"></div>
+        <div class="sanctuary-moon-arc sanctuary-moon-arc-one"></div><div class="sanctuary-moon-arc sanctuary-moon-arc-two"></div>
+        <div class="sanctuary-horizon"></div><div class="sanctuary-tide sanctuary-tide-back"></div><div class="sanctuary-tide sanctuary-tide-mid"></div><div class="sanctuary-tide sanctuary-tide-front"></div>
+        <span class="sanctuary-scene-caption">A PLACE TO EXHALE <span>—</span> EST. IN STILLNESS</span>
+        <span class="sanctuary-scene-seal">OCEAN<br />VALLEY <i>✳</i></span>
+      </div>
+      <span class="sanctuary-side-note">SLOW DOWN&nbsp; · &nbsp;SETTLE IN&nbsp; · &nbsp;FEEL GOOD</span>
+    </section>
+
+    <section class="sanctuary-manifesto">
+      <span class="eyebrow">A DIFFERENT KIND OF GETAWAY</span>
+      <p>Wellness isn’t another thing to achieve.<br /><em>It’s a feeling you can return to.</em></p>
+      <span class="sanctuary-manifesto-mark" aria-hidden="true">✳</span>
+    </section>
+
+    <section class="section services-section sanctuary-treatments">
+      <div class="section-heading"><div><span class="eyebrow">MADE FOR YOUR MOMENT</span><h2>Find your own<br />kind of <em>unwind.</em></h2></div><a class="text-link" href="/services">View all treatments <span aria-hidden="true">↗</span></a></div>
+      <p class="sanctuary-section-intro">Explore the rituals, see what each visit feels like, and choose the care that meets you where you are.</p>
+      <ServiceCollection />
+    </section>
+
+    <section class="sanctuary-ritual">
+      <div class="sanctuary-ritual-visual" aria-hidden="true"><div class="ritual-orb"></div><div class="ritual-stone ritual-stone-one"></div><div class="ritual-stone ritual-stone-two"></div><span>PAUSE<br />·<br />BREATHE</span></div>
+      <div class="sanctuary-ritual-copy"><span class="eyebrow">NOT A CHECKLIST. A CHECK-IN.</span><h2>Let the day<br />fall <em>away.</em></h2><p>Every visit begins with listening. We’ll help you find a treatment that feels right, then give you the time and space to settle into it.</p><a class="text-link" href="/about">Discover our approach <span aria-hidden="true">↗</span></a></div>
+    </section>
+
+    <section class="section offers-section sanctuary-offers"><div class="section-heading"><div><span class="eyebrow">A LITTLE SOMETHING EXTRA</span><h2>Good things<br />come with <em>time.</em></h2></div><a class="text-link" href="/offers">Explore offers <span aria-hidden="true">↗</span></a></div><FeaturedOffers /></section>
+
+    <section class="sanctuary-booking">
+      <div class="sanctuary-booking-glow" aria-hidden="true"></div>
+      <div><span class="eyebrow">WHEN YOU’RE READY</span><h2>Your time.<br /><em>Your way.</em></h2><p>Choose your treatment, find a time that feels unhurried, and leave the rest to us.</p><a class="button button-light" href="/booking">Find your moment <span aria-hidden="true">↗</span></a></div>
+      <div class="sanctuary-booking-seal" aria-hidden="true"><span>MAKE SPACE</span><i>✳</i><small>FOR YOURSELF</small></div>
+    </section>
+
+    <section class="sanctuary-process"><div><span class="eyebrow">SIMPLE FROM THE START</span><h2>Arrive as you are.<br /><em>Leave a little lighter.</em></h2></div><div class="sanctuary-process-steps"><article><span>01</span><h3>Choose what calls to you</h3><p>Discover our treatments and learn what each experience offers.</p></article><article><span>02</span><h3>Find a time to slow down</h3><p>Browse live availability and pick a time that works for you.</p></article><article><span>03</span><h3>We’ll take it from here</h3><p>Confirm your visit securely, then arrive ready to unwind.</p></article></div></section>
+
+    <section class="sanctuary-contact"><span class="eyebrow">A QUESTION BEFORE YOU ARRIVE?</span><h2>We’re here<br />to <em>help.</em></h2><a class="button" href="/contact">Contact the sanctuary <span aria-hidden="true">↗</span></a><a class="text-link" href="/faq">A few helpful answers <span aria-hidden="true">→</span></a></section>
+  </div>
+</SiteLayout>

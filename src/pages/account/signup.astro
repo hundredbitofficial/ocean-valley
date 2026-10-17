@@ -1,0 +1,5 @@
+---
+import SiteLayout from "@/layouts/SiteLayout.astro";
+import AuthForm from "@/components/AuthForm";
+---
+<SiteLayout title="Create an account" noindex={true}><section class="account-panel"><span class="eyebrow">MAKE YOURSELF AT HOME</span><h1>Let’s get<br /><em>to know you.</em></h1><p>Create an account to securely keep your appointments together.</p><AuthForm client:load initialMode="signup" /><p class="setup-hint">Registration never grants administrative privileges. Email verification is required.</p></section></SiteLayout>

@@ -1,0 +1,7 @@
+---
+import SiteLayout from "@/layouts/SiteLayout.astro";
+import AccountDashboard from "@/components/AccountDashboard";
+---
+<SiteLayout title="Your account" description="View your Ocean Valley appointments." noindex={true}>
+  <section class="account-panel account-panel-wide"><AccountDashboard client:load /></section>
+</SiteLayout>

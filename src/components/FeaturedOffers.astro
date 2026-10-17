@@ -1,0 +1,20 @@
+---
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+let offers: { code: string; description: string | null; discount_type: string; discount_value: number }[] = [];
+if (supabase) {
+  const now = new Date().toISOString();
+  const { data } = await supabase.from("coupons")
+    .select("code,description,discount_type,discount_value")
+    .eq("is_active", true)
+    .or(`starts_at.is.null,starts_at.lte.${now}`)
+    .or(`ends_at.is.null,ends_at.gt.${now}`)
+    .order("ends_at")
+    .limit(2);
+  offers = data ?? [];
+}
+---
+{offers.length > 0 ? (
+  <div class="featured-offers">{offers.map((offer) => <article><span class="eyebrow">A LITTLE EXTRA</span><h3>{offer.code}</h3><p>{offer.description || (offer.discount_type === "percentage" ? `${offer.discount_value / 100}% off an eligible visit` : "An owner-approved amount off an eligible visit")}</p><a class="text-link" href="/offers">See eligibility <span aria-hidden="true">↗</span></a></article>)}</div>
+) : (
+  <div class="offers-note"><span class="eyebrow">{isSupabaseConfigured ? "THE RIGHT MOMENT" : "A LITTLE EXTRA"}</span><p>{isSupabaseConfigured ? "There are no active offers just now. We’ll let you know when that changes." : "Any current offers will appear here once confirmed by Ocean Valley."}</p><a class="text-link" href="/offers">Explore offers <span aria-hidden="true">↗</span></a></div>
+)}

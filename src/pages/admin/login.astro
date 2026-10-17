@@ -1,0 +1,5 @@
+---
+import SiteLayout from "@/layouts/SiteLayout.astro";
+import AdminAuthForm from "@/components/AdminAuthForm";
+---
+<SiteLayout title="Admin sign in" noindex={true}><section class="account-panel"><span class="eyebrow">OCEAN VALLEY / ADMIN</span><h1>Admin<br /><em>sign in.</em></h1><p>Administrative access is restricted to identities provisioned by a trusted project owner.</p><AdminAuthForm client:load /><p class="setup-hint">Public registration cannot grant an admin role. Admin authorization is enforced by trusted app metadata and database policies.</p></section></SiteLayout>

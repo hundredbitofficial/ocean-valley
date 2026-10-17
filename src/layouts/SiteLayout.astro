@@ -1,0 +1,74 @@
+---
+import "../styles/global.css";
+import { brand } from "@/lib/site";
+interface Props {
+  title?: string;
+  description?: string;
+  noindex?: boolean;
+}
+const { title = brand.name, description = brand.description, noindex = false } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site ?? "https://oceanvalley.example");
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f5f3ee" />
+    <meta name="description" content={description} />
+    <meta name="robots" content={noindex ? "noindex,nofollow" : "index,follow"} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={`${title} — Ocean Valley`} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content={`${title} — Ocean Valley`} />
+    <meta name="twitter:description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <title>{title} — Ocean Valley</title>
+    <slot name="head" />
+  </head>
+  <body class={Astro.url.pathname === "/admin" || (Astro.url.pathname.startsWith("/admin/") && Astro.url.pathname !== "/admin/login") ? "admin-page" : undefined}>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="wordmark" href="/" aria-label="Ocean Valley home">
+        <span class="wordmark-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+        <span class="wordmark-copy">ocean valley<small>WELLNESS STUDIO</small></span>
+      </a>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav"><span></span><span></span><span class="sr-only">Toggle navigation</span></button>
+      <nav id="site-nav" class="site-nav" aria-label="Main navigation">
+        <a href="/services">Treatments</a>
+        <a href="/about">Our approach</a>
+        <a href="/offers">Offers</a>
+        <a href="/contact">Contact</a>
+        <a class="nav-account" href="/account/login">Sign in</a>
+        <a class="button button-small" href="/booking">Book a visit <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
+    <main id="main"><slot /></main>
+    <footer class="site-footer">
+      <div class="footer-main">
+        <div class="footer-brand">
+          <a class="wordmark footer-wordmark" href="/"><span class="wordmark-mark" aria-hidden="true"><span></span><span></span><span></span></span><span class="wordmark-copy">ocean valley<small>WELLNESS STUDIO</small></span></a>
+          <p>A little space to slow down<br />and come back to yourself.</p>
+        </div>
+        <div class="footer-column"><span class="footer-label">EXPLORE</span><a href="/services">Treatments</a><a href="/about">Our approach</a><a href="/faq">Frequently asked questions</a></div>
+        <div class="footer-column"><span class="footer-label">INFORMATION</span><a href="/contact">Contact</a><a href="/privacy-policy">Privacy</a><a href="/terms">Terms</a><a href="/cancellation-refund-policy">Booking policy</a></div>
+        <div class="footer-note"><span class="footer-label">A NOTE</span><p>Studio details and appointment availability will be shared once confirmed by Ocean Valley.</p></div>
+      </div>
+      <div class="footer-bottom"><span>© {new Date().getFullYear()} Ocean Valley</span><span>Made for a more mindful moment.</span></div>
+    </footer>
+    <script>
+      const menu = document.querySelector<HTMLButtonElement>(".menu-toggle");
+      const nav = document.querySelector<HTMLElement>("#site-nav");
+      menu?.addEventListener("click", () => {
+        const expanded = menu.getAttribute("aria-expanded") === "true";
+        menu.setAttribute("aria-expanded", String(!expanded));
+        nav?.classList.toggle("is-open", !expanded);
+      });
+    </script>
+  </body>
+</html>

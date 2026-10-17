@@ -1,0 +1,41 @@
+---
+export const prerender = false;
+import SiteLayout from "@/layouts/SiteLayout.astro";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import { formatRupees } from "@/lib/site";
+import { createPrivilegedSupabase } from "@/lib/server/supabase";
+const slug = Astro.params.slug;
+let service: { name: string; short_description: string | null; description: string | null; duration_minutes: number; price_paise: number; service_media?: { storage_path: string; alt_text: string | null; caption: string | null; media_type: string; sort_order: number }[]; media?: { alt_text: string | null; caption: string | null; media_type: string; signedUrl?: string }[] } | null = null;
+let failed = false;
+if (isSupabaseConfigured && supabase && slug) {
+  const { data, error } = await supabase.from("services")
+    .select("name,short_description,description,duration_minutes,price_paise,service_media(storage_path,alt_text,caption,media_type,sort_order)")
+    .eq("slug", slug).eq("is_active", true).maybeSingle();
+  service = data;
+  failed = Boolean(error);
+  const privileged = service?.service_media?.length ? createPrivilegedSupabase() : null;
+  if (service && privileged) {
+    service.media = await Promise.all([...(service.service_media ?? [])].sort((a, b) => a.sort_order - b.sort_order).map(async (media) => {
+      const { data: signed, error: signingError } = await privileged.storage.from("service-media").createSignedUrl(media.storage_path, 3600);
+      if (signingError) console.error(`Public service media signing failed: ${signingError.message}`);
+      return { alt_text: media.alt_text, caption: media.caption, media_type: media.media_type, signedUrl: signed?.signedUrl };
+    }));
+  } else if (service?.service_media?.length) {
+    console.error("Public service media could not be signed because SUPABASE_SERVICE_ROLE_KEY is not configured.");
+  }
+}
+---
+<SiteLayout title={service?.name ?? "Treatment details"} noindex={!service}>
+  {service ? (
+    <section class="detail-hero">
+      <a class="text-link" href="/services">← All treatments</a>
+      {service.media?.some((media) => media.signedUrl) && <div class="service-detail-media" aria-label="Treatment photos and videos">{service.media.map((media) => media.signedUrl && (media.media_type === "image" ? <figure><img src={media.signedUrl} alt={media.alt_text ?? ""} loading="lazy" />{media.caption && <figcaption>{media.caption}</figcaption>}</figure> : <figure><video src={media.signedUrl} controls playsinline preload="metadata" aria-label={media.alt_text ?? "Service video"} />{media.caption && <figcaption>{media.caption}</figcaption>}</figure>))}</div>}
+      <span class="eyebrow">OCEAN VALLEY / TREATMENTS</span>
+      <h1>{service.name}</h1><p>{service.description || service.short_description}</p>
+      <div class="detail-facts"><span>{service.duration_minutes} minutes</span><span>{formatRupees(service.price_paise)}</span></div>
+      <a class="button" href={`/booking?service=${encodeURIComponent(slug ?? "")}`}>Check availability <span aria-hidden="true">↗</span></a>
+    </section>
+  ) : (
+    <section class="page-hero"><span class="eyebrow">TREATMENT DETAILS</span><h1>A moment,<br /><em>in the making.</em></h1><p>{failed ? "We couldn’t load this treatment just now. Please try again later." : isSupabaseConfigured ? "This treatment isn’t available right now, or the link may have changed." : "Treatment details will appear when Ocean Valley publishes its confirmed menu."}</p><a class="text-link" href="/services">Back to treatments <span aria-hidden="true">↗</span></a></section>
+  )}
+</SiteLayout>

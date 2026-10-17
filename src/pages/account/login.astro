@@ -1,0 +1,5 @@
+---
+import SiteLayout from "@/layouts/SiteLayout.astro";
+import AuthForm from "@/components/AuthForm";
+---
+<SiteLayout title="Sign in" noindex={true}><section class="account-panel"><span class="eyebrow">WELCOME BACK</span><h1>Good to<br /><em>see you.</em></h1><p>Sign in to see your appointments and booking details.</p><AuthForm client:load /><p class="setup-hint">Customer accounts use Supabase Auth. An owner-approved Supabase project must be configured before sign-in can succeed.</p></section></SiteLayout>

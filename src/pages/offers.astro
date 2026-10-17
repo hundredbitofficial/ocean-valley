@@ -1,0 +1,24 @@
+---
+export const prerender = false;
+import SiteLayout from "@/layouts/SiteLayout.astro";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+let offers: { code: string; description: string | null; discount_type: string; discount_value: number; minimum_spend_paise: number }[] = [];
+let failed = false;
+if (supabase) {
+  const now = new Date().toISOString();
+  const { data, error } = await supabase.from("coupons")
+    .select("code,description,discount_type,discount_value,max_discount_paise,minimum_spend_paise")
+    .eq("is_active", true)
+    .or(`starts_at.is.null,starts_at.lte.${now}`)
+    .or(`ends_at.is.null,ends_at.gt.${now}`)
+    .order("ends_at");
+  offers = data ?? [];
+  failed = Boolean(error);
+}
+---
+<SiteLayout title="Offers" description="View active Ocean Valley offers and eligibility details.">
+  <section class="page-hero"><span class="eyebrow">A LITTLE EXTRA</span><h1>Good things<br />to <em>look forward to.</em></h1><p>Any current offers will be shared here once confirmed. No codes or discounts are active until listed.</p></section>
+  <section class="section">
+    {offers.length ? <div class="offer-grid">{offers.map((offer) => <article class="offer-card"><span class="eyebrow">OCEAN VALLEY OFFER</span><h2>{offer.code}</h2><p>{offer.description || (offer.discount_type === "percentage" ? `${offer.discount_value / 100}% off` : `${new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(offer.discount_value / 100)} off`)}</p><small>Minimum spend: {new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(offer.minimum_spend_paise / 100)}. Eligibility is checked during booking.</small></article>)}</div> : <div class="empty-panel"><h3>{failed ? "Offers unavailable right now." : isSupabaseConfigured ? "No active offers just now." : "Offers are on their way."}</h3><p>Check back here for owner-approved offers and eligibility details.</p></div>}
+  </section>
+</SiteLayout>

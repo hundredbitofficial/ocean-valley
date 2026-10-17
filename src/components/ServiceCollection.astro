@@ -1,0 +1,70 @@
+---
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import { formatRupees } from "@/lib/site";
+import { createPrivilegedSupabase } from "@/lib/server/supabase";
+interface Service {
+  name: string;
+  slug: string;
+  short_description: string | null;
+  duration_minutes: number;
+  price_paise: number;
+  is_featured?: boolean;
+  service_media?: { storage_path: string; alt_text: string | null; caption: string | null; media_type: string; sort_order: number }[];
+  imageUrl?: string;
+  hasVideo?: boolean;
+}
+let services: Service[] = [];
+let failed = false;
+if (supabase) {
+  const { data, error } = await supabase
+    .from("services")
+    .select("name,slug,short_description,duration_minutes,price_paise,is_featured,service_media(storage_path,alt_text,caption,media_type,sort_order)")
+    .eq("is_active", true)
+    .order("sort_order")
+    .limit(6);
+  if (error) failed = true;
+  else {
+    services = data ?? [];
+    services.forEach((service) => {
+      service.service_media?.sort((a, b) => a.sort_order - b.sort_order);
+      service.hasVideo = Boolean(service.service_media?.some((item) => item.media_type === "video"));
+    });
+    const privileged = createPrivilegedSupabase();
+    if (privileged) {
+      await Promise.all(services.map(async (service) => {
+        const image = service.service_media?.find((item) => item.media_type === "image");
+        if (image) {
+          const { data: signed, error: signingError } = await privileged.storage.from("service-media").createSignedUrl(image.storage_path, 3600);
+          if (signingError) console.error(`Public service image signing failed: ${signingError.message}`);
+          else service.imageUrl = signed.signedUrl;
+        }
+      }));
+    }
+  }
+}
+---
+{!isSupabaseConfigured ? (
+  <div class="empty-panel"><span class="eyebrow">THE TREATMENT MENU</span><h3>Thoughtfully chosen, soon to be shared.</h3><p>Our treatment menu is being prepared. Confirmed services and appointment availability will appear here when published.</p><a class="text-link" href="/contact">Get in touch <span aria-hidden="true">↗</span></a></div>
+) : failed ? (
+  <div class="empty-panel" role="status"><h3>We couldn’t load the menu just now.</h3><p>Please try again in a little while.</p></div>
+) : services.length ? (
+  <div class="service-grid">
+    {services.map((service, index) => (
+      <a class="service-card" href={`/services/${service.slug}`}>
+        <div class={`service-art art-${index % 3} ${service.imageUrl ? "has-image" : ""}`}>
+          {service.imageUrl
+            ? <img src={service.imageUrl} alt={service.service_media?.find((item) => item.media_type === "image")?.alt_text ?? ""} loading="lazy" />
+            : <span class="service-art-number" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>}
+          {service.hasVideo && <span class="service-media-badge"><span aria-hidden="true">▶</span> Treatment film</span>}
+        </div>
+        <div class="service-card-copy">
+          <div><h3>{service.name}</h3><span class="service-arrow" aria-hidden="true">↗</span></div>
+          <p>{service.short_description}</p>
+          <div class="service-meta"><span>{service.duration_minutes} min · {formatRupees(service.price_paise)}</span><span>Details</span></div>
+        </div>
+      </a>
+    ))}
+  </div>
+) : (
+  <div class="empty-panel"><h3>{failed ? "Menu unavailable" : "The menu is taking shape."}</h3><p>{failed ? "We couldn’t load the treatment menu. Please try again later." : "No treatments are available to book right now. Please check back soon."}</p></div>
+)}

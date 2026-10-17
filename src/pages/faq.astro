@@ -1,0 +1,13 @@
+---
+import SiteLayout from "@/layouts/SiteLayout.astro";
+const questions = [
+  ["How do I book an appointment?", "Once the treatment menu and appointment availability are published, you’ll be able to select a service and request a time through our booking page."],
+  ["What treatments do you offer?", "Our confirmed treatment menu will be published here as soon as it is ready."],
+  ["Where is Ocean Valley located?", "The studio address will be shared once confirmed by Ocean Valley."],
+  ["What is the cancellation or refund policy?", "The confirmed cancellation, rescheduling and refund policy will be shown before a booking is placed. No policy terms are assumed here."],
+];
+---
+<SiteLayout title="Frequently asked questions">
+  <section class="page-hero"><span class="eyebrow">A FEW THINGS TO KNOW</span><h1>Questions, meet<br /><em>answers.</em></h1><p>We’ll keep this page updated as studio details and booking information are confirmed.</p></section>
+  <section class="faq-list">{questions.map(([question, answer], index) => <details class="faq-item"><summary><span class="faq-num">0{index + 1}</span><span>{question}</span><span class="faq-plus" aria-hidden="true">+</span></summary><p>{answer}</p></details>)}</section>
+</SiteLayout>

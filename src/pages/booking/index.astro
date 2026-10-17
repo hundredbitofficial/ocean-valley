@@ -1,0 +1,9 @@
+---
+import SiteLayout from "@/layouts/SiteLayout.astro";
+import BookingStart from "@/components/BookingStart";
+const requestedService = Astro.url.searchParams.get("service") ?? "";
+---
+<SiteLayout title="Book a visit" description="Choose an Ocean Valley wellness treatment and check appointment availability." noindex={true}>
+  <section class="page-hero"><span class="eyebrow">YOUR TIME STARTS HERE</span><h1>Let’s find a<br /><em>moment for you.</em></h1><p>Choose a treatment and check available times. Your appointment is only confirmed after server-side verification and any required payment.</p></section>
+  <section class="booking-entry"><BookingStart client:load selectedService={requestedService} /></section>
+</SiteLayout>

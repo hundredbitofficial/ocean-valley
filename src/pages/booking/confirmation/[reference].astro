@@ -1,0 +1,20 @@
+---
+export const prerender = false;
+import SiteLayout from "@/layouts/SiteLayout.astro";
+import { createRequestSupabase } from "@/lib/server/supabase";
+import { formatRupees } from "@/lib/site";
+const client = createRequestSupabase(Astro.cookies, Astro.request);
+let booking: { id: string; reference: string; service_name_snapshot: string; starts_at: string; status: string; payment_status: string; advance_due_paise: number } | null = null;
+if (client) {
+  const { data: { user } } = await client.auth.getUser();
+  if (user) {
+    const { data } = await client.from("bookings")
+      .select("id,reference,service_name_snapshot,starts_at,status,payment_status,advance_due_paise")
+      .eq("reference", Astro.params.reference ?? "").maybeSingle();
+    booking = data;
+  }
+}
+---
+<SiteLayout title="Booking confirmation" noindex={true}>
+  {booking?.status === "confirmed" && booking.payment_status !== "failed" ? <section class="page-hero"><span class="eyebrow">APPOINTMENT CONFIRMED / {booking.reference}</span><h1>Your moment<br /><em>is yours.</em></h1><p>{booking.service_name_snapshot} · {new Date(booking.starts_at).toLocaleString("en-IN", { dateStyle: "full", timeStyle: "short", timeZone: "Asia/Kolkata" })}</p><p>Advance received: {formatRupees(booking.advance_due_paise)}. Appointment details are also available in your account.</p><a class="button" href={`/account/bookings/${booking.id}`}>View appointment <span aria-hidden="true">↗</span></a></section> : <section class="page-hero"><span class="eyebrow">YOUR APPOINTMENT</span><h1>One moment,<br /><em>please.</em></h1><p>{booking ? "The provider has not confirmed this appointment yet. Check your account shortly; do not pay again while the payment is reconciling." : "Confirmation details are visible only to the signed-in customer who owns the booking."}</p><a class="text-link" href="/account">Go to your account <span aria-hidden="true">↗</span></a></section>}
+</SiteLayout>

@@ -1,0 +1,104 @@
+---
+export const prerender = false;
+import SiteLayout from "@/layouts/SiteLayout.astro";
+import { createRequestSupabase, isAdminRole } from "@/lib/server/supabase";
+import { formatRupees } from "@/lib/site";
+
+const client = createRequestSupabase(Astro.cookies, Astro.request);
+if (!client) return Astro.redirect("/admin/login");
+const { data: { user } } = await client.auth.getUser();
+if (!user || !isAdminRole(user.app_metadata)) return Astro.redirect("/admin/login");
+
+const sections = [
+  ["bookings", "Appointments"],
+  ["services", "Treatment menu"],
+  ["chambers", "Treatment chambers"],
+  ["media", "Media"],
+  ["offers", "Coupons"],
+  ["payments", "Payments"],
+  ["settings", "Settings"],
+];
+const indiaDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+const requestedDay = Astro.url.searchParams.get("day");
+const selectedDay = requestedDay && /^\d{4}-\d{2}-\d{2}$/.test(requestedDay)
+  && new Date(`${requestedDay}T00:00:00Z`).toISOString().slice(0, 10) === requestedDay
+  ? requestedDay
+  : indiaDate;
+const dayStart = new Date(`${selectedDay}T00:00:00+05:30`);
+const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+const now = new Date().toISOString();
+const [todayResult, upcomingResult, pendingResult, servicesResult, dayBookingsResult] = await Promise.all([
+  client.from("bookings").select("id", { count: "exact", head: true }).gte("starts_at", dayStart.toISOString()).lt("starts_at", dayEnd.toISOString()),
+  client.from("bookings").select("id", { count: "exact", head: true }).eq("status", "confirmed").gte("starts_at", now),
+  client.from("bookings").select("id", { count: "exact", head: true }).eq("status", "pending_payment"),
+  client.from("services").select("id", { count: "exact", head: true }).eq("is_active", true),
+  client.from("bookings").select("id,reference,service_name_snapshot,starts_at,status,payment_status,total_paise")
+    .gte("starts_at", dayStart.toISOString()).lt("starts_at", dayEnd.toISOString())
+    .order("starts_at").limit(100),
+]);
+const databaseConnected = !todayResult.error && !upcomingResult.error && !pendingResult.error && !servicesResult.error && !dayBookingsResult.error;
+const countLabel = (result: { error: unknown; count: number | null }) =>
+  result.error ? "—" : (result.count ?? 0).toLocaleString("en-IN");
+const dayBookings = dayBookingsResult.data ?? [];
+const sectionsForNav = [
+  ["bookings", "Appointments & calendar"],
+  ["services", "Treatment menu"],
+  ["chambers", "Treatment chambers"],
+  ["media", "Ad banners & media"],
+  ["offers", "Coupons"],
+  ["payments", "Razorpay"],
+  ["settings", "Settings"],
+];
+---
+<SiteLayout title="Admin dashboard" noindex={true}>
+  <section class="admin-shell admin-dashboard-shell">
+    <header class="admin-topbar">
+      <a class="admin-brand" href="/admin" aria-label="Ocean Valley administration home"><span class="admin-brand-mark">OV</span><span><strong>Ocean Valley</strong><small>EXECUTIVE ADMINISTRATION SUITE<br />Reception &amp; Slot Management</small></span></a>
+      <div class="admin-toolbar">
+        <span class:list={["admin-status-pill", databaseConnected ? "is-connected" : "is-disconnected"]}><i></i> Supabase: {databaseConnected ? "Connected" : "Unavailable"}</span>
+        <a class="admin-toolbar-link" href="/">← Return to sanctuary</a>
+        <a class="admin-toolbar-link is-signout" href="/api/auth/signout">Sign out</a>
+      </div>
+    </header>
+
+    <main class="admin-content admin-dashboard-content">
+      <div class="admin-page-heading"><div><span class="eyebrow">PRIVATE ADMINISTRATION</span><h1>Good day, {user.user_metadata.full_name ?? user.email?.split("@")[0] ?? "admin"}.</h1><p>Appointment operations at a glance. All figures are live from your connected database.</p></div><time datetime={new Date().toISOString()}>{new Intl.DateTimeFormat("en-IN", { dateStyle: "full", timeZone: "Asia/Kolkata" }).format(new Date())}</time></div>
+
+      <div class="admin-metrics">
+        <article><span>Appointments today</span><strong>{countLabel(todayResult)}</strong><small>Scheduled for {new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeZone: "Asia/Kolkata" }).format(dayStart)}</small></article>
+        <article><span>Upcoming confirmed</span><strong>{countLabel(upcomingResult)}</strong><small>Confirmed visits ahead</small></article>
+        <article><span>Awaiting payment</span><strong>{countLabel(pendingResult)}</strong><small>Payment still pending</small></article>
+        <article><span>Active treatments</span><strong>{countLabel(servicesResult)}</strong><small>Visible in the service menu</small></article>
+      </div>
+
+      <nav class="admin-section-tabs" aria-label="Administration sections">
+        {sectionsForNav.map(([slug, label], index) => <a class:list={["admin-section-tab", index === 0 && "is-selected"]} href={`/admin/${slug}`}>{index === 0 ? "▦" : index === 1 ? "▱" : index === 2 ? "◉" : index === 3 ? "▣" : index === 4 ? "◇" : index === 5 ? "▭" : "⚙"} <span>{label}</span></a>)}
+      </nav>
+
+      <section class="admin-calendar-panel">
+        <div class="admin-panel-heading"><div><span class="admin-panel-icon">▦</span><div><h2>Appointments &amp; daily schedule</h2><p>Appointments are shown in India Standard Time.</p></div></div><a class="admin-primary-button" href="/admin/bookings">Manage appointments <span aria-hidden="true">↗</span></a></div>
+        <form class="admin-day-controls" method="get" action="/admin">
+          <label class="admin-date-control">Appointment day <input type="date" name="day" value={selectedDay} /></label>
+          <button type="submit" class="admin-secondary-button">View day</button>
+          <a class="admin-secondary-button" href={`/admin?day=${indiaDate}`}>Today</a>
+          <span class="admin-day-count">{dayBookings.length} appointment{dayBookings.length === 1 ? "" : "s"}</span>
+        </form>
+        <div class="admin-schedule-summary">
+          <div><span>Confirmed</span><strong>{dayBookings.filter((booking) => booking.status === "confirmed").length}</strong></div>
+          <div><span>Pending payment</span><strong>{dayBookings.filter((booking) => booking.status === "pending_payment").length}</strong></div>
+          <div><span>Other status</span><strong>{dayBookings.filter((booking) => !["confirmed", "pending_payment"].includes(booking.status)).length}</strong></div>
+        </div>
+        {dayBookingsResult.error
+          ? <p class="admin-inline-notice" role="status">Appointments could not be loaded. Check the database connection and try again.</p>
+          : dayBookings.length
+            ? <div class="admin-appointment-list">{dayBookings.map((booking) => <article class="admin-appointment-card"><time>{new Date(booking.starts_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}</time><div><strong>{booking.service_name_snapshot}</strong><span>{booking.reference} · {booking.payment_status.replaceAll("_", " ")}</span></div><span class:list={["admin-booking-badge", `status-${booking.status}`]}>{booking.status.replaceAll("_", " ")}</span><strong class="admin-appointment-price">{formatRupees(booking.total_paise)}</strong></article>)}</div>
+            : <div class="admin-empty-day"><strong>No appointments on this day.</strong><span>Choose another date or review upcoming bookings.</span></div>}
+      </section>
+
+      <div class="admin-dashboard-links">
+        {sections.map(([slug, label, description]) => <a href={`/admin/${slug}`}><strong>{label}</strong><span>{description}</span><b aria-hidden="true">↗</b></a>)}
+      </div>
+      {!databaseConnected && <p class="setup-hint">Some dashboard data is unavailable. Check Supabase project credentials, migrations and administrator permissions.</p>}
+    </main>
+  </section>
+</SiteLayout>

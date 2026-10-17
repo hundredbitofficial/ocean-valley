@@ -1,0 +1,5 @@
+---
+import SiteLayout from "@/layouts/SiteLayout.astro";
+import AccountDashboard from "@/components/AccountDashboard";
+---
+<SiteLayout title="Your bookings" noindex={true}><section class="page-hero"><span class="eyebrow">YOUR OCEAN VALLEY</span><h1>Your <em>bookings.</em></h1><p>Your appointments are private and visible only after signing in to your account.</p></section><section class="booking-entry"><AccountDashboard client:load /></section></SiteLayout>
